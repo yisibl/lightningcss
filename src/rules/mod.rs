@@ -85,7 +85,6 @@ use nesting::NestingRule;
 use page::PageRule;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::default::Default;
 use style::StyleRule;
 use supports::SupportsRule;
 use unknown::UnknownAtRule;
@@ -259,10 +258,7 @@ impl<'i> CssRuleList<'i> {
     for mut rule in self.0.drain(..) {
       match &mut rule {
         CssRule::Keyframes(keyframes) => {
-          if context
-            .unused_symbols
-            .contains(&keyframes.name.to_css_string(Default::default()).unwrap())
-          {
+          if context.unused_symbols.contains(keyframes.name.0.as_ref()) {
             continue;
           }
           keyframes.minify(context);
