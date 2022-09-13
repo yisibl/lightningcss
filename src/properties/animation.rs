@@ -10,12 +10,14 @@ use crate::properties::{Property, PropertyId, VendorPrefix};
 use crate::targets::Browsers;
 use crate::traits::{Parse, PropertyHandler, Shorthand, ToCss, Zero};
 use crate::values::number::CSSNumber;
+use crate::values::string::CowArcStr;
 use crate::values::{easing::EasingFunction, ident::CustomIdent, time::Time};
 use cssparser::*;
 use itertools::izip;
 use smallvec::SmallVec;
 
 /// A value for the [animation-name](https://drafts.csswg.org/css-animations/#animation-name) property.
+/// animation-name = [ none | <custom-ident> | <string> ]#
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(
   feature = "serde",
@@ -25,9 +27,13 @@ use smallvec::SmallVec;
 pub enum AnimationName<'i> {
   /// The `none` keyword.
   None,
-  /// An identifier of a `@keyframes` rule.
+  /// `<custom-ident>` of a `animation-name`.
   #[cfg_attr(feature = "serde", serde(borrow))]
   Ident(CustomIdent<'i>),
+
+  /// `<string>` of a `animation-name`.
+  #[cfg_attr(feature = "serde", serde(borrow))]
+  Custom(CowArcStr<'i>),
 }
 
 impl<'i> Parse<'i> for AnimationName<'i> {
@@ -36,13 +42,22 @@ impl<'i> Parse<'i> for AnimationName<'i> {
       return Ok(AnimationName::None);
     }
 
-    let location = input.current_source_location();
-    let name = match *input.next()? {
-      Token::Ident(ref s) => s.into(),
-      Token::QuotedString(ref s) => s.into(),
-      ref t => return Err(location.new_unexpected_token_error(t.clone())),
-    };
-    Ok(AnimationName::Ident(CustomIdent(name)))
+    match input.next()?.clone() {
+      Token::Ident(ref s) => {
+        // CSS-wide keywords without quotes throws an error.
+        match_ignore_ascii_case! { &*s,
+          "none" | "initial" | "inherit" | "unset" | "default" | "revert" | "revert-layer" => {
+            Err(input.new_unexpected_token_error(Token::Ident(s.clone())))
+          },
+          _ => {
+            Ok(AnimationName::Ident(CustomIdent(s.into())))
+          }
+        }
+      }
+
+      Token::QuotedString(ref s) => Ok(AnimationName::Custom(s.into())),
+      t => return Err(input.new_unexpected_token_error(t.clone())),
+    }
   }
 }
 
@@ -52,14 +67,26 @@ impl<'i> ToCss for AnimationName<'i> {
     W: std::fmt::Write,
   {
     match self {
-      AnimationName::None => dest.write_str("none"),
-      AnimationName::Ident(s) => {
+      AnimationName::None => dest.write_str("none")?,
+      AnimationName::Ident(ident) => {
         if let Some(css_module) = &mut dest.css_module {
-          css_module.reference(&s.0, dest.loc.source_index)
+          css_module.reference(&ident.0, dest.loc.source_index)
         }
-        s.to_css(dest)
+        dest.write_ident(ident.0.as_ref())?;
+      }
+      AnimationName::Custom(s) => {
+        // CSS-wide keywords and `none` cannot remove quotes.
+        match_ignore_ascii_case! { &*s,
+          "none" | "initial" | "inherit" | "unset" | "default" | "revert" | "revert-layer" => {
+            serialize_string(&s, dest)?;
+          },
+          _ => {
+            dest.write_ident(s.as_ref())?;
+          }
+        }
       }
     }
+    Ok(())
   }
 }
 
@@ -254,6 +281,50 @@ impl<'i> ToCss for Animation<'i> {
         }
 
         if self.play_state != AnimationPlayState::Running || AnimationPlayState::parse_string(&name.0).is_ok() {
+          dest.write_char(' ')?;
+          self.play_state.to_css(dest)?;
+        }
+      }
+      AnimationName::Custom(name) => {
+        if !self.duration.is_zero() || !self.delay.is_zero() {
+          dest.write_char(' ')?;
+          self.duration.to_css(dest)?;
+        }
+
+        if (self.timing_function != EasingFunction::Ease
+          && self.timing_function != EasingFunction::CubicBezier(0.25, 0.1, 0.25, 1.0))
+          || EasingFunction::is_ident(&name.to_string())
+        {
+          dest.write_char(' ')?;
+          self.timing_function.to_css(dest)?;
+        }
+
+        if !self.delay.is_zero() {
+          dest.write_char(' ')?;
+          self.delay.to_css(dest)?;
+        }
+
+        if self.iteration_count != AnimationIterationCount::Number(1.0) || name.to_string() == "infinite" {
+          dest.write_char(' ')?;
+          self.iteration_count.to_css(dest)?;
+        }
+
+        if self.direction != AnimationDirection::Normal
+          || AnimationDirection::parse_string(&name.to_string()).is_ok()
+        {
+          dest.write_char(' ')?;
+          self.direction.to_css(dest)?;
+        }
+
+        if self.fill_mode != AnimationFillMode::None || AnimationFillMode::parse_string(&name.to_string()).is_ok()
+        {
+          dest.write_char(' ')?;
+          self.fill_mode.to_css(dest)?;
+        }
+
+        if self.play_state != AnimationPlayState::Running
+          || AnimationPlayState::parse_string(&name.to_string()).is_ok()
+        {
           dest.write_char(' ')?;
           self.play_state.to_css(dest)?;
         }
