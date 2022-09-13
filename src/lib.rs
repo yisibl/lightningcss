@@ -8082,6 +8082,47 @@ mod tests {
   fn test_animation() {
     minify_test(".foo { animation-name: test }", ".foo{animation-name:test}");
     minify_test(".foo { animation-name: \"test\" }", ".foo{animation-name:test}");
+
+    minify_test(".foo { animation-name: none }", ".foo{animation-name:none}");
+    minify_test(".foo { animation-name: none, none }", ".foo{animation-name:none,none}");
+
+    minify_test(".foo { animation-name: unset }", ".foo{animation-name:unset}");
+
+    minify_test(".foo { animation-name: \"unset\" }", ".foo{animation-name:\"unset\"}");
+    minify_test(
+      ".foo { animation-name: \"unset\", \"revert\"}",
+      ".foo{animation-name:\"unset\",\"revert\"}",
+    );
+    minify_test(
+      ".foo { animation-name: foo, \"revert\"}",
+      ".foo{animation-name:foo,\"revert\"}",
+    );
+    minify_test(
+      ".foo { animation-name: \"string\", \"revert\"}",
+      ".foo{animation-name:string,\"revert\"}",
+    );
+    minify_test(
+      ".foo { animation-name: \"string\", foo, \"revert\"}",
+      ".foo{animation-name:string,foo,\"revert\"}",
+    );
+    minify_test(
+      ".foo { animation-name: \"default\" }",
+      ".foo{animation-name:\"default\"}",
+    );
+
+    error_test(
+      r#"
+      .foo { animation-name: default; }
+    "#,
+      ParserError::UnexpectedToken(Token::Ident("default".into())),
+    );
+    // error_test(
+    //   r#"
+    //   .foo { animation-name: unset, inherit; }
+    // "#,
+    //   ParserError::UnexpectedToken(Token::Ident("inherit".into())),
+    // );
+
     minify_test(".foo { animation-name: foo, bar }", ".foo{animation-name:foo,bar}");
     minify_test(".foo { animation-duration: 100ms }", ".foo{animation-duration:.1s}");
     minify_test(
@@ -8165,6 +8206,17 @@ mod tests {
     minify_test(
       ".foo { animation: foo 0s 3s infinite }",
       ".foo{animation:foo 0s 3s infinite}",
+    );
+    minify_test(".foo { animation: \"unset\" }", ".foo{animation:\"unset\"}");
+    minify_test(".foo { animation: \"string\" .5s }", ".foo{animation:string .5s}");
+    minify_test(".foo { animation: \"unset\" .5s }", ".foo{animation:\"unset\" .5s}");
+    minify_test(
+      ".foo { animation: none, \"unset\" .5s}",
+      ".foo{animation:none,\"unset\" .5s}",
+    );
+    minify_test(
+      ".foo { animation: \"unset\" 0s 3s infinite, none }",
+      ".foo{animation:\"unset\" 0s 3s infinite,none}",
     );
     minify_test(".foo { animation: none }", ".foo{animation:none}");
     test(
