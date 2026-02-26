@@ -13117,15 +13117,15 @@ mod tests {
     );
     minify_test(
       ".foo { background: radial-gradient(circle at 100%, #333, #333 50%, #eee 75%, #333 75%) }",
-      ".foo{background:radial-gradient(circle at 100%,#333,#333 50%,#eee 75%,#333 0%)}",
+      ".foo{background:radial-gradient(circle at 100%,#333 50%,#eee 75%,#333 0%)}",
     );
     minify_test(
       ".foo { background: radial-gradient(farthest-corner circle at 100% 50%, #333, #333 50%, #eee 75%, #333 75%) }",
-      ".foo{background:radial-gradient(circle at 100%,#333,#333 50%,#eee 75%,#333 0%)}"
+      ".foo{background:radial-gradient(circle at 100%,#333 50%,#eee 75%,#333 0%)}"
     );
     minify_test(
       ".foo { background: radial-gradient(farthest-corner circle at 50% 50%, #333, #333 50%, #eee 75%, #333 75%) }",
-      ".foo{background:radial-gradient(circle,#333,#333 50%,#eee 75%,#333 0%)}"
+      ".foo{background:radial-gradient(circle,#333 50%,#eee 75%,#333 0%)}"
     );
     minify_test(
       ".foo { background: radial-gradient(ellipse at top, #e66465, transparent) }",
@@ -14231,7 +14231,7 @@ mod tests {
     );
     minify_test(
       ".test2 { background: linear-gradient(red, green 50%, green 160%); }",
-      ".test2{background:linear-gradient(red,green 50% 160%)}",
+      ".test2{background:linear-gradient(red,green 50%)}",
     );
     minify_test(
       ".x { background: linear-gradient(red 50%, green 20%); }",
@@ -14249,29 +14249,28 @@ mod tests {
       ".x { background: linear-gradient(red, green -90px); }",
       ".x{background:linear-gradient(red,green 0)}",
     );
-    // TODO fixme
-    // minify_test(
-    //   ".x { background: linear-gradient(red 0% 25%, green 0% 50%); }",
-    //   ".x{background:linear-gradient(red,green 0)}",
-    // );
+    minify_test(
+      ".x { background: linear-gradient(red 0% 25%, green 0% 50%); }",
+      ".x{background:linear-gradient(red 25%,green 0%)}",
+    );
 
     // http://wpt.live/css/css-images/gradient-move-stops-ref.html
-    // minify_test(
-    //   ".x { background: linear-gradient(to right, yellow 0%, blue 70%, green 70%, green 100%); }",
-    //   ".x{background:linear-gradient(90deg,#ff0,#00f 70%,green 0%,green)}",
-    // );
-    // minify_test(
-    //   ".x { background: linear-gradient(to right, yellow 0%, blue 70%, green 70%, green 0%); }",
-    //   ".x{background:linear-gradient(90deg,#ff0,#00f 70%,green 0%)}",
-    // );
-    // minify_test(
-    //   ".x { background: linear-gradient(to right, yellow 0%, blue 70%, green 70%, green 0); }",
-    //   ".x{background:linear-gradient(90deg,#ff0,#00f 70%,green 0%)}",
-    // );
-    // minify_test(
-    //   ".x { background: linear-gradient(to right, yellow 0%, blue 70%, green 70%, green); }",
-    //   ".x{background:linear-gradient(90deg,#ff0,#00f 70%,green 0%,green)}",
-    // );
+    minify_test(
+      ".x { background: linear-gradient(to right, yellow 0%, blue 70%, green 70%, green 100%); }",
+      ".x{background:linear-gradient(90deg,#ff0,#00f 70%,green 0%)}",
+    );
+    minify_test(
+      ".x { background: linear-gradient(to right, yellow 0%, blue 70%, green 70%, green 0%); }",
+      ".x{background:linear-gradient(90deg,#ff0,#00f 70%,green 0%)}",
+    );
+    minify_test(
+      ".x { background: linear-gradient(to right, yellow 0%, blue 70%, green 70%, green 0); }",
+      ".x{background:linear-gradient(90deg,#ff0,#00f 70%,green 0%)}",
+    );
+    minify_test(
+      ".x { background: linear-gradient(to right, yellow 0%, blue 70%, green 70%, green); }",
+      ".x{background:linear-gradient(90deg,#ff0,#00f 70%,green 0%)}",
+    );
   }
 
   #[test]

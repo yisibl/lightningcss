@@ -213,10 +213,18 @@ impl ToCss for Gradient {
 
     match self {
       Gradient::Linear(linear) | Gradient::RepeatingLinear(linear) => {
-        linear.to_css(dest, linear.vendor_prefix != VendorPrefix::None)?
+        linear.to_css(
+          dest,
+          linear.vendor_prefix != VendorPrefix::None,
+          matches!(self, Gradient::RepeatingLinear(_)),
+        )?
       }
-      Gradient::Radial(radial) | Gradient::RepeatingRadial(radial) => radial.to_css(dest)?,
-      Gradient::Conic(conic) | Gradient::RepeatingConic(conic) => conic.to_css(dest)?,
+      Gradient::Radial(radial) | Gradient::RepeatingRadial(radial) => {
+        radial.to_css_internal(dest, matches!(self, Gradient::RepeatingRadial(_)))?
+      }
+      Gradient::Conic(conic) | Gradient::RepeatingConic(conic) => {
+        conic.to_css_internal(dest, matches!(self, Gradient::RepeatingConic(_)))?
+      }
       Gradient::WebKitGradient(g) => g.to_css(dest)?,
     }
 
@@ -264,7 +272,7 @@ impl LinearGradient {
     })
   }
 
-  fn to_css<W>(&self, dest: &mut Printer<W>, is_prefixed: bool) -> Result<(), PrinterError>
+  fn to_css<W>(&self, dest: &mut Printer<W>, is_prefixed: bool, is_repeating: bool) -> Result<(), PrinterError>
   where
     W: std::fmt::Write,
   {
@@ -277,7 +285,7 @@ impl LinearGradient {
 
     // We can omit `to bottom` or `180deg` because it is the default.
     if angle == 180.0 {
-      serialize_items(&self.items, dest)
+      serialize_items(&self.items, dest, is_repeating)
 
     // If we have `to top` or `0deg`, and all of the positions and hints are percentages,
     // we can flip the gradient the other direction and omit the direction.
@@ -315,7 +323,7 @@ impl LinearGradient {
           }
         })
         .collect();
-      serialize_items(&items, dest)
+      serialize_items(&items, dest, is_repeating)
     } else {
       if self.direction != LineDirection::Vertical(VerticalPositionKeyword::Bottom)
         && self.direction != LineDirection::Angle(Angle::Deg(180.0))
@@ -324,7 +332,7 @@ impl LinearGradient {
         dest.delim(',', false)?;
       }
 
-      serialize_items(&self.items, dest)
+      serialize_items(&self.items, dest, is_repeating)
     }
   }
 
@@ -396,6 +404,15 @@ impl ToCss for RadialGradient {
   where
     W: std::fmt::Write,
   {
+    self.to_css_internal(dest, false)
+  }
+}
+
+impl RadialGradient {
+  fn to_css_internal<W>(&self, dest: &mut Printer<W>, is_repeating: bool) -> Result<(), PrinterError>
+  where
+    W: std::fmt::Write,
+  {
     if self.shape != EndingShape::default() {
       self.shape.to_css(dest)?;
       if self.position.is_center() {
@@ -411,11 +428,9 @@ impl ToCss for RadialGradient {
       dest.delim(',', false)?;
     }
 
-    serialize_items(&self.items, dest)
+    serialize_items(&self.items, dest, is_repeating)
   }
-}
 
-impl RadialGradient {
   fn get_fallback(&self, kind: ColorFallbackKind) -> RadialGradient {
     RadialGradient {
       shape: self.shape.clone(),
@@ -835,6 +850,15 @@ impl ToCss for ConicGradient {
   where
     W: std::fmt::Write,
   {
+    self.to_css_internal(dest, false)
+  }
+}
+
+impl ConicGradient {
+  fn to_css_internal<W>(&self, dest: &mut Printer<W>, is_repeating: bool) -> Result<(), PrinterError>
+  where
+    W: std::fmt::Write,
+  {
     if !self.angle.is_zero() {
       dest.write_str("from ")?;
       self.angle.to_css(dest)?;
@@ -852,11 +876,9 @@ impl ToCss for ConicGradient {
       dest.delim(',', false)?;
     }
 
-    serialize_items(&self.items, dest)
+    serialize_items(&self.items, dest, is_repeating)
   }
-}
 
-impl ConicGradient {
   fn get_fallback(&self, kind: ColorFallbackKind) -> ConicGradient {
     ConicGradient {
       angle: self.angle.clone(),
@@ -1214,6 +1236,43 @@ fn remove_adjacent_identical_stops<D: Clone + std::cmp::PartialEq<D>>(
   (result, source_indices)
 }
 
+fn remove_redundant_edge_color_stops<D: Clone + std::cmp::PartialEq<D>>(
+  mut items: Vec<GradientItem<DimensionPercentage<D>>>,
+  mut source_indices: Vec<usize>,
+) -> (Vec<GradientItem<DimensionPercentage<D>>>, Vec<usize>) {
+  // Adjacent edge stops with the same color are redundant in non-repeating gradients.
+  // Example: `red 0%, red 25%` -> keep only `red 25%`.
+  let mut start = 0;
+  let mut end = items.len();
+
+  while start + 1 < end {
+    match (&items[start], &items[start + 1]) {
+      (
+        GradientItem::ColorStop(ColorStop { color: a, .. }),
+        GradientItem::ColorStop(ColorStop { color: b, .. }),
+      ) if a == b => start += 1,
+      _ => break,
+    }
+  }
+
+  while end > start + 1 {
+    match (&items[end - 2], &items[end - 1]) {
+      (
+        GradientItem::ColorStop(ColorStop { color: a, .. }),
+        GradientItem::ColorStop(ColorStop { color: b, .. }),
+      ) if a == b => end -= 1,
+      _ => break,
+    }
+  }
+
+  if start > 0 || end < items.len() {
+    items = items[start..end].to_vec();
+    source_indices = source_indices[start..end].to_vec();
+  }
+
+  (items, source_indices)
+}
+
 fn zero_like_position<D: Zero>(reference: &DimensionPercentage<D>) -> DimensionPercentage<D> {
   match reference {
     DimensionPercentage::Percentage(_) => DimensionPercentage::Percentage(Percentage(0.0)),
@@ -1232,8 +1291,12 @@ fn minify_items_with_fixup<
     + std::fmt::Debug,
 >(
   items: &[GradientItem<DimensionPercentage<D>>],
+  is_repeating: bool,
 ) -> Vec<GradientItem<DimensionPercentage<D>>> {
-  let (mut minified, source_indices) = remove_adjacent_identical_stops(&resolve_positions_fixup(items));
+  let (mut minified, mut source_indices) = remove_adjacent_identical_stops(&resolve_positions_fixup(items));
+  if !is_repeating {
+    (minified, source_indices) = remove_redundant_edge_color_stops(minified, source_indices);
+  }
   let expected_fixed = minified.clone();
 
   for i in 0..minified.len() {
@@ -1303,13 +1366,14 @@ fn serialize_items<
 >(
   items: &Vec<GradientItem<DimensionPercentage<D>>>,
   dest: &mut Printer<W>,
+  is_repeating: bool,
 ) -> Result<(), PrinterError>
 where
   W: std::fmt::Write,
 {
   let minified_items;
   let items = if dest.minify {
-    minified_items = minify_items_with_fixup(items);
+    minified_items = minify_items_with_fixup(items, is_repeating);
     &minified_items
   } else {
     items
