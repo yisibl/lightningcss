@@ -13,7 +13,7 @@ use crate::macros::enum_property;
 use crate::prefixes::Feature;
 use crate::printer::Printer;
 use crate::targets::{should_compile, Browsers, Targets};
-use crate::traits::{IsCompatible, Parse, ToCss, TrySign, Zero};
+use crate::traits::{private::TryAdd, IsCompatible, Parse, ToCss, TrySign, Zero};
 use crate::vendor_prefix::VendorPrefix;
 #[cfg(feature = "visitor")]
 use crate::visitor::Visit;
@@ -1021,8 +1021,284 @@ fn parse_items<'i, 't, D: Parse<'i>>(
   Ok(items)
 }
 
+fn item_position_get<D>(item: &GradientItem<DimensionPercentage<D>>) -> Option<&DimensionPercentage<D>> {
+  match item {
+    GradientItem::ColorStop(ColorStop {
+      position: Some(position),
+      ..
+    }) => Some(position),
+    GradientItem::Hint(position) => Some(position),
+    _ => None,
+  }
+}
+
+fn item_position_set<D>(item: &mut GradientItem<DimensionPercentage<D>>, position: DimensionPercentage<D>) {
+  match item {
+    GradientItem::ColorStop(stop) => stop.position = Some(position),
+    GradientItem::Hint(hint) => *hint = position,
+  }
+}
+
+fn is_definitely_greater<D: std::cmp::PartialOrd<D> + TrySign>(
+  left: &DimensionPercentage<D>,
+  right: &DimensionPercentage<D>,
+) -> bool {
+  if let Some(std::cmp::Ordering::Greater) = left.partial_cmp(right) {
+    return true;
+  }
+
+  let left_sign = left.try_sign();
+  let right_sign = right.try_sign();
+  matches!(
+    (left_sign, right_sign),
+    (Some(l), Some(r)) if (l > 0.0 && r <= 0.0) || (l >= 0.0 && r < 0.0)
+  )
+}
+
+fn resolve_positions_fixup<
+  D: std::cmp::PartialEq<D>
+    + std::cmp::PartialOrd<D>
+    + std::ops::Mul<f32, Output = D>
+    + TryAdd<D>
+    + TrySign
+    + Zero
+    + Clone
+    + std::fmt::Debug,
+>(
+  items: &[GradientItem<DimensionPercentage<D>>],
+) -> Vec<GradientItem<DimensionPercentage<D>>> {
+  let mut items = items.to_vec();
+  if items.is_empty() {
+    return items;
+  }
+
+  // Step 1: If the first color stop does not have a position, set it to 0%.
+  for item in &mut items {
+    if let GradientItem::ColorStop(stop) = item {
+      if stop.position.is_none() {
+        stop.position = Some(DimensionPercentage::Percentage(Percentage(0.0)));
+      }
+      break;
+    }
+  }
+
+  // Step 2: If the last color stop does not have a position, set it to 100%.
+  for item in items.iter_mut().rev() {
+    if let GradientItem::ColorStop(stop) = item {
+      if stop.position.is_none() {
+        stop.position = Some(DimensionPercentage::Percentage(Percentage(1.0)));
+      }
+      break;
+    }
+  }
+
+  // Step 3: Clamp to the largest specified previous position if out of order.
+  let mut previous_positions: Vec<DimensionPercentage<D>> = Vec::new();
+  for item in &mut items {
+    let Some(current) = item_position_get(item).cloned() else {
+      continue;
+    };
+
+    let mut largest_previous: Option<DimensionPercentage<D>> = None;
+    for prev in &previous_positions {
+      if !is_definitely_greater(prev, &current) {
+        continue;
+      }
+
+      match &largest_previous {
+        None => largest_previous = Some(prev.clone()),
+        Some(largest) => {
+          if is_definitely_greater(prev, largest) {
+            largest_previous = Some(prev.clone());
+          }
+        }
+      }
+    }
+
+    let mut resolved = largest_previous.unwrap_or(current);
+    // When a length-based stop gets clamped to 0%, normalize to length zero.
+    // This enables shorter output like `green 0` instead of `green 0%`.
+    if matches!(resolved, DimensionPercentage::Percentage(Percentage(p)) if p == 0.0)
+      && matches!(
+        item,
+        GradientItem::ColorStop(ColorStop {
+          position: Some(DimensionPercentage::Dimension(_)),
+          ..
+        })
+      )
+    {
+      resolved = DimensionPercentage::Dimension(D::zero());
+    }
+
+    item_position_set(item, resolved.clone());
+    previous_positions.push(resolved);
+  }
+
+  // Step 4: Evenly space each run of adjacent color stops without positions.
+  let mut last_positioned = None;
+  let mut i = 0;
+  while i < items.len() {
+    match &items[i] {
+      GradientItem::ColorStop(ColorStop { position: None, .. }) => {}
+      _ => {
+        if let Some(position) = item_position_get(&items[i]) {
+          last_positioned = Some(position.clone());
+        }
+        i += 1;
+        continue;
+      }
+    }
+
+    let run_start = i;
+    while matches!(
+      items.get(i),
+      Some(GradientItem::ColorStop(ColorStop { position: None, .. }))
+    ) {
+      i += 1;
+    }
+    let run_end = i;
+    let run_len = run_end - run_start;
+    let denominator = (run_len + 1) as f32;
+
+    let Some(before) = last_positioned.clone() else {
+      continue;
+    };
+
+    let mut after = None;
+    let mut j = run_end;
+    while j < items.len() {
+      if let Some(position) = item_position_get(&items[j]) {
+        after = Some(position.clone());
+        break;
+      }
+      j += 1;
+    }
+
+    let Some(after) = after else {
+      continue;
+    };
+
+    for offset in 0..run_len {
+      let ratio = (offset as f32 + 1.0) / denominator;
+      let position = before.clone() * (1.0 - ratio) + after.clone() * ratio;
+      if let GradientItem::ColorStop(stop) = &mut items[run_start + offset] {
+        stop.position = Some(position);
+      }
+    }
+  }
+
+  items
+}
+
+fn remove_adjacent_identical_stops<D: Clone + std::cmp::PartialEq<D>>(
+  items: &[GradientItem<DimensionPercentage<D>>],
+) -> (Vec<GradientItem<DimensionPercentage<D>>>, Vec<usize>) {
+  let mut result = Vec::with_capacity(items.len());
+  let mut source_indices = Vec::with_capacity(items.len());
+  for (idx, item) in items.iter().enumerate() {
+    if let (
+      Some(GradientItem::ColorStop(ColorStop {
+        color: prev_color,
+        position: prev_position,
+      })),
+      GradientItem::ColorStop(ColorStop { color, position }),
+    ) = (result.last(), item)
+    {
+      if prev_color == color && prev_position == position {
+        continue;
+      }
+    }
+    result.push(item.clone());
+    source_indices.push(idx);
+  }
+  (result, source_indices)
+}
+
+fn zero_like_position<D: Zero>(reference: &DimensionPercentage<D>) -> DimensionPercentage<D> {
+  match reference {
+    DimensionPercentage::Percentage(_) => DimensionPercentage::Percentage(Percentage(0.0)),
+    _ => DimensionPercentage::Dimension(D::zero()),
+  }
+}
+
+fn minify_items_with_fixup<
+  D: std::cmp::PartialEq<D>
+    + std::cmp::PartialOrd<D>
+    + std::ops::Mul<f32, Output = D>
+    + TryAdd<D>
+    + TrySign
+    + Zero
+    + Clone
+    + std::fmt::Debug,
+>(
+  items: &[GradientItem<DimensionPercentage<D>>],
+) -> Vec<GradientItem<DimensionPercentage<D>>> {
+  let (mut minified, source_indices) = remove_adjacent_identical_stops(&resolve_positions_fixup(items));
+  let expected_fixed = minified.clone();
+
+  for i in 0..minified.len() {
+    let Some(original_position) = (match &minified[i] {
+      GradientItem::ColorStop(ColorStop {
+        position: Some(position),
+        ..
+      }) => Some(position.clone()),
+      _ => None,
+    }) else {
+      continue;
+    };
+
+    if let GradientItem::ColorStop(stop) = &mut minified[i] {
+      stop.position = None;
+    }
+
+    if resolve_positions_fixup(&minified) == expected_fixed {
+      continue;
+    }
+
+    if let GradientItem::ColorStop(stop) = &mut minified[i] {
+      stop.position = Some(original_position.clone());
+    }
+
+    let source_position = source_indices.get(i).and_then(|&source_idx| match &items[source_idx] {
+      GradientItem::ColorStop(ColorStop {
+        position: Some(position),
+        ..
+      }) => Some(position),
+      _ => None,
+    });
+    let zero_position = source_position
+      .map(zero_like_position)
+      .unwrap_or_else(|| zero_like_position(&original_position));
+    if zero_position == original_position {
+      continue;
+    }
+
+    if let GradientItem::ColorStop(stop) = &mut minified[i] {
+      stop.position = Some(zero_position);
+    }
+
+    if resolve_positions_fixup(&minified) == expected_fixed {
+      continue;
+    }
+
+    if let GradientItem::ColorStop(stop) = &mut minified[i] {
+      stop.position = Some(original_position);
+    }
+  }
+
+  minified
+}
+
 fn serialize_items<
-  D: ToCss + std::cmp::PartialEq<D> + std::ops::Mul<f32, Output = D> + TrySign + Clone + std::fmt::Debug,
+  D: ToCss
+    + std::cmp::PartialEq<D>
+    + std::cmp::PartialOrd<D>
+    + std::ops::Mul<f32, Output = D>
+    + TryAdd<D>
+    + TrySign
+    + Zero
+    + Clone
+    + std::fmt::Debug,
   W,
 >(
   items: &Vec<GradientItem<DimensionPercentage<D>>>,
@@ -1031,6 +1307,14 @@ fn serialize_items<
 where
   W: std::fmt::Write,
 {
+  let minified_items;
+  let items = if dest.minify {
+    minified_items = minify_items_with_fixup(items);
+    &minified_items
+  } else {
+    items
+  };
+
   let mut first = true;
   let mut last: Option<&GradientItem<DimensionPercentage<D>>> = None;
   for item in items {
@@ -1045,7 +1329,7 @@ where
         match (prev, item) {
           (
             GradientItem::ColorStop(ColorStop {
-              position: Some(_),
+              position: Some(prev_position),
               color: ca,
             }),
             GradientItem::ColorStop(ColorStop {
@@ -1053,6 +1337,11 @@ where
               color: cb,
             }),
           ) if ca == cb => {
+            if prev_position == p {
+              // Adjacent identical stops are redundant.
+              continue;
+            }
+
             dest.write_char(' ')?;
             p.to_css(dest)?;
             last = None;

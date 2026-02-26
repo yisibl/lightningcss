@@ -13117,15 +13117,15 @@ mod tests {
     );
     minify_test(
       ".foo { background: radial-gradient(circle at 100%, #333, #333 50%, #eee 75%, #333 75%) }",
-      ".foo{background:radial-gradient(circle at 100%,#333,#333 50%,#eee 75%,#333 75%)}",
+      ".foo{background:radial-gradient(circle at 100%,#333,#333 50%,#eee 75%,#333 0%)}",
     );
     minify_test(
       ".foo { background: radial-gradient(farthest-corner circle at 100% 50%, #333, #333 50%, #eee 75%, #333 75%) }",
-      ".foo{background:radial-gradient(circle at 100%,#333,#333 50%,#eee 75%,#333 75%)}"
+      ".foo{background:radial-gradient(circle at 100%,#333,#333 50%,#eee 75%,#333 0%)}"
     );
     minify_test(
       ".foo { background: radial-gradient(farthest-corner circle at 50% 50%, #333, #333 50%, #eee 75%, #333 75%) }",
-      ".foo{background:radial-gradient(circle,#333,#333 50%,#eee 75%,#333 75%)}"
+      ".foo{background:radial-gradient(circle,#333,#333 50%,#eee 75%,#333 0%)}"
     );
     minify_test(
       ".foo { background: radial-gradient(ellipse at top, #e66465, transparent) }",
@@ -14150,6 +14150,128 @@ mod tests {
         ..Browsers::default()
       },
     );
+  }
+
+  #[test]
+  pub fn test_gradients_fixup() {
+    minify_test(
+      ".foo { background: linear-gradient(red 0%, green 50%, pink); }",
+      ".foo{background:linear-gradient(red,green,pink)}",
+    );
+    // 合并相同的 color stops
+    minify_test(
+      ".foo { background: linear-gradient(red 0%, green 50% 50%, pink); }",
+      ".foo{background:linear-gradient(red,green,pink)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(red 0%, green 50%, green 50%); }",
+      ".foo{background:linear-gradient(red,green 50%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(red 0%, green 50% 50%); }",
+      ".foo{background:linear-gradient(red,green 50%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(red -20% -20%, green 40%, pink); }",
+      ".foo{background:linear-gradient(red -20%,green,pink)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(red -20% -20%, green 50%, pink); }",
+      ".foo{background:linear-gradient(red -20%,green 50%,pink)}",
+    );
+
+    // CSS spec test
+    minify_test(
+      ".case1 { background: linear-gradient(red 0%, white 20%, blue 100%); }",
+      ".case1{background:linear-gradient(red,#fff 20%,#00f)}",
+    );
+    minify_test(
+      ".case2 { background: linear-gradient(red 40%, white 60%, black 80%, blue 100%); }",
+      ".case2{background:linear-gradient(red 40%,#fff,#000,#00f)}",
+    );
+    minify_test(
+      ".case3 { background: linear-gradient(red -50%, white 25%, blue 100%); }",
+      ".case3{background:linear-gradient(red -50%,#fff,#00f)}",
+    );
+    // minify_test(
+    //   ".case4 { background: linear-gradient(red -50px, white calc(-25px + 50%), blue 100%); }",
+      // ".case4{background:linear-gradient(red -50px,#fff,#00f)}",
+    //   ".case4{background:linear-gradient(red -50px,#fff calc(50% - 25px),#00f)}",
+    // );
+    minify_test(
+      ".case5 { background: linear-gradient(red 20px, white 20px, blue 40px); }",
+      ".case5{background:linear-gradient(red 20px,#fff 0,#00f 40px)}",
+    );
+    minify_test(
+      ".case6 { background: linear-gradient(red 0%, white 0%, black 150%, blue 150%); }",
+      ".case6{background:linear-gradient(red,#fff 0%,#000 150%,#00f)}",
+    );
+    minify_test(
+      ".case7 { background: linear-gradient(red 80px, white 80px, black 90px, blue 100px); }",
+      ".case7{background:linear-gradient(red 80px,#fff 0,#000,#00f 100px)}",
+    );
+
+    // 原始 case6 特例：white -50% fixup 后保持 white 0%（比 -50% 更短）。
+    minify_test(
+      ".x { background: linear-gradient(red, white -50%, black 150%, blue); }",
+      ".x{background:linear-gradient(red,#fff 0%,#000 150%,#00f)}",
+    );
+
+    minify_test(
+      ".x { background: linear-gradient(red 110px, green 20px); }",
+      ".x{background:linear-gradient(red 110px,green 0)}",
+    );
+    minify_test(
+      ".test1 { background: linear-gradient(red, green 50%, green -20%); }",
+      ".test1{background:linear-gradient(red,green 50%)}",
+    );
+    minify_test(
+      ".test1 { background: linear-gradient(red, green 50%, green -0%); }",
+      ".test1{background:linear-gradient(red,green 50%)}",
+    );
+    minify_test(
+      ".test2 { background: linear-gradient(red, green 50%, green 160%); }",
+      ".test2{background:linear-gradient(red,green 50% 160%)}",
+    );
+    minify_test(
+      ".x { background: linear-gradient(red 50%, green 20%); }",
+      ".x{background:linear-gradient(red 50%,green 0%)}",
+    );
+    minify_test(
+      ".x { background: linear-gradient(red, green -20%); }",
+      ".x{background:linear-gradient(red,green 0%)}",
+    );
+    minify_test(
+      ".x { background: linear-gradient(red, green -0rem); }",
+      ".x{background:linear-gradient(red,green 0)}",
+    );
+    minify_test(
+      ".x { background: linear-gradient(red, green -90px); }",
+      ".x{background:linear-gradient(red,green 0)}",
+    );
+    // TODO fixme
+    // minify_test(
+    //   ".x { background: linear-gradient(red 0% 25%, green 0% 50%); }",
+    //   ".x{background:linear-gradient(red,green 0)}",
+    // );
+
+    // http://wpt.live/css/css-images/gradient-move-stops-ref.html
+    // minify_test(
+    //   ".x { background: linear-gradient(to right, yellow 0%, blue 70%, green 70%, green 100%); }",
+    //   ".x{background:linear-gradient(90deg,#ff0,#00f 70%,green 0%,green)}",
+    // );
+    // minify_test(
+    //   ".x { background: linear-gradient(to right, yellow 0%, blue 70%, green 70%, green 0%); }",
+    //   ".x{background:linear-gradient(90deg,#ff0,#00f 70%,green 0%)}",
+    // );
+    // minify_test(
+    //   ".x { background: linear-gradient(to right, yellow 0%, blue 70%, green 70%, green 0); }",
+    //   ".x{background:linear-gradient(90deg,#ff0,#00f 70%,green 0%)}",
+    // );
+    // minify_test(
+    //   ".x { background: linear-gradient(to right, yellow 0%, blue 70%, green 70%, green); }",
+    //   ".x{background:linear-gradient(90deg,#ff0,#00f 70%,green 0%,green)}",
+    // );
   }
 
   #[test]
@@ -27923,70 +28045,25 @@ mod tests {
 
   #[test]
   fn test_mix_blend_mode() {
-    minify_test(
-      ".foo { mix-blend-mode: normal }",
-      ".foo{mix-blend-mode:normal}",
-    );
-    minify_test(
-      ".foo { mix-blend-mode: multiply }",
-      ".foo{mix-blend-mode:multiply}",
-    );
-    minify_test(
-      ".foo { mix-blend-mode: screen }",
-      ".foo{mix-blend-mode:screen}",
-    );
-    minify_test(
-      ".foo { mix-blend-mode: overlay }",
-      ".foo{mix-blend-mode:overlay}",
-    );
-    minify_test(
-      ".foo { mix-blend-mode: darken }",
-      ".foo{mix-blend-mode:darken}",
-    );
-    minify_test(
-      ".foo { mix-blend-mode: lighten }",
-      ".foo{mix-blend-mode:lighten}",
-    );
+    minify_test(".foo { mix-blend-mode: normal }", ".foo{mix-blend-mode:normal}");
+    minify_test(".foo { mix-blend-mode: multiply }", ".foo{mix-blend-mode:multiply}");
+    minify_test(".foo { mix-blend-mode: screen }", ".foo{mix-blend-mode:screen}");
+    minify_test(".foo { mix-blend-mode: overlay }", ".foo{mix-blend-mode:overlay}");
+    minify_test(".foo { mix-blend-mode: darken }", ".foo{mix-blend-mode:darken}");
+    minify_test(".foo { mix-blend-mode: lighten }", ".foo{mix-blend-mode:lighten}");
     minify_test(
       ".foo { mix-blend-mode: color-dodge }",
       ".foo{mix-blend-mode:color-dodge}",
     );
-    minify_test(
-      ".foo { mix-blend-mode: color-burn }",
-      ".foo{mix-blend-mode:color-burn}",
-    );
-    minify_test(
-      ".foo { mix-blend-mode: hard-light }",
-      ".foo{mix-blend-mode:hard-light}",
-    );
-    minify_test(
-      ".foo { mix-blend-mode: soft-light }",
-      ".foo{mix-blend-mode:soft-light}",
-    );
-    minify_test(
-      ".foo { mix-blend-mode: difference }",
-      ".foo{mix-blend-mode:difference}",
-    );
-    minify_test(
-      ".foo { mix-blend-mode: exclusion }",
-      ".foo{mix-blend-mode:exclusion}",
-    );
-    minify_test(
-      ".foo { mix-blend-mode: hue }",
-      ".foo{mix-blend-mode:hue}",
-    );
-    minify_test(
-      ".foo { mix-blend-mode: saturation }",
-      ".foo{mix-blend-mode:saturation}",
-    );
-    minify_test(
-      ".foo { mix-blend-mode: color }",
-      ".foo{mix-blend-mode:color}",
-    );
-    minify_test(
-      ".foo { mix-blend-mode: luminosity }",
-      ".foo{mix-blend-mode:luminosity}",
-    );
+    minify_test(".foo { mix-blend-mode: color-burn }", ".foo{mix-blend-mode:color-burn}");
+    minify_test(".foo { mix-blend-mode: hard-light }", ".foo{mix-blend-mode:hard-light}");
+    minify_test(".foo { mix-blend-mode: soft-light }", ".foo{mix-blend-mode:soft-light}");
+    minify_test(".foo { mix-blend-mode: difference }", ".foo{mix-blend-mode:difference}");
+    minify_test(".foo { mix-blend-mode: exclusion }", ".foo{mix-blend-mode:exclusion}");
+    minify_test(".foo { mix-blend-mode: hue }", ".foo{mix-blend-mode:hue}");
+    minify_test(".foo { mix-blend-mode: saturation }", ".foo{mix-blend-mode:saturation}");
+    minify_test(".foo { mix-blend-mode: color }", ".foo{mix-blend-mode:color}");
+    minify_test(".foo { mix-blend-mode: luminosity }", ".foo{mix-blend-mode:luminosity}");
     minify_test(
       ".foo { mix-blend-mode: plus-darker }",
       ".foo{mix-blend-mode:plus-darker}",
@@ -30528,7 +30605,10 @@ mod tests {
       ".foo { color-scheme: dark light only; }",
       ".foo{color-scheme:light dark only}",
     );
-    minify_test(".foo { color-scheme: foo bar light; }", ".foo{color-scheme:foo bar light}");
+    minify_test(
+      ".foo { color-scheme: foo bar light; }",
+      ".foo{color-scheme:foo bar light}",
+    );
     minify_test(
       ".foo { color-scheme: only foo dark bar; }",
       ".foo{color-scheme:only foo dark bar}",
