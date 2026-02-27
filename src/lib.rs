@@ -14160,6 +14160,29 @@ mod tests {
     );
     // 合并相同的 color stops
     minify_test(
+      ".foo { background: linear-gradient(green 0% 0px); }",
+      ".foo{background:linear-gradient(green 0)}",
+    );
+    // TODO: single color stop and 0-1 positions
+    // 对于不支持的浏览器，我们应该输出 Double-position color stops，
+    // => output: linear-gradient(green 0 0)
+    // 如果也不支持 Double-position color stops，
+    // => output: linear-gradient(green,green)
+    // https://github.com/w3c/csswg-drafts/issues/10092#issuecomment-2609214310
+    // WPT: https://github.com/web-platform-tests/wpt/commit/4fa8f72cc027224e7519da827faa9803bd2b1131
+    // minify_test(
+    //   ".foo { background: linear-gradient(green 0px, green 0px); }",
+    //   ".foo{background:linear-gradient(green)}",
+    // );
+    // minify_test(
+    //   ".foo { background: linear-gradient(green 0% calc(1% - 1%)); }",
+    //   ".foo{background:linear-gradient(green)}",
+    // );
+    minify_test(
+      ".foo { background: linear-gradient(green 0 calc(1px - 1px)); }",
+      ".foo{background:linear-gradient(green 0)}",
+    );
+    minify_test(
       ".foo { background: linear-gradient(red 0%, green 50% 50%, pink); }",
       ".foo{background:linear-gradient(red,green,pink)}",
     );
@@ -14193,11 +14216,11 @@ mod tests {
       ".case3 { background: linear-gradient(red -50%, white 25%, blue 100%); }",
       ".case3{background:linear-gradient(red -50%,#fff,#00f)}",
     );
-    // minify_test(
-    //   ".case4 { background: linear-gradient(red -50px, white calc(-25px + 50%), blue 100%); }",
-      // ".case4{background:linear-gradient(red -50px,#fff,#00f)}",
-    //   ".case4{background:linear-gradient(red -50px,#fff calc(50% - 25px),#00f)}",
-    // );
+    minify_test(
+      ".case4 { background: linear-gradient(red -50px, white calc(-25px + 50%), blue 100%); }",
+      ".case4{background:linear-gradient(red -50px,#fff,#00f)}",
+      // ".case4{background:linear-gradient(red -50px,#fff calc(50% - 25px),#00f)}",
+    );
     minify_test(
       ".case5 { background: linear-gradient(red 20px, white 20px, blue 40px); }",
       ".case5{background:linear-gradient(red 20px,#fff 0,#00f 40px)}",
@@ -14252,6 +14275,31 @@ mod tests {
     minify_test(
       ".x { background: linear-gradient(red 0% 25%, green 0% 50%); }",
       ".x{background:linear-gradient(red 25%,green 0%)}",
+    );
+    minify_test(
+      ".x { background: linear-gradient(red 0% 25%, green 0% -20%); }",
+      ".x{background:linear-gradient(red 25%,green 0%)}",
+    );
+    minify_test(
+      ".x { background: linear-gradient(red 0% 25%, green 60% 80%); }",
+      ".x{background:linear-gradient(red 25%,green 60%)}",
+    );
+    // 当存在 30000000px 这种很大值的时候，Chrome 有 bug
+    minify_test(
+      ".x { background: linear-gradient(green 0% 200px, red 200px 30000000px); }",
+      ".x{background:linear-gradient(green 200px,red 0)}",
+    );
+    minify_test(
+      ".x { background: linear-gradient(green 0% 200px, red 0px 3000000%); }",
+      ".x{background:linear-gradient(green 200px,red 0)}",
+    );
+    minify_test(
+      ".x { background: linear-gradient(red 0% 25%, green 0% 50%, pink 0% 80%); }",
+      ".x{background:linear-gradient(red 25%,green 0% 50%,pink 0%)}",
+    );
+    minify_test(
+      ".x { background: linear-gradient(red 0%, 10%, pink 55%, green 100%); }",
+      ".x{background:linear-gradient(red,10%,pink,green)}",
     );
 
     // http://wpt.live/css/css-images/gradient-move-stops-ref.html
