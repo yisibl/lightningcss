@@ -29462,6 +29462,29 @@ mod tests {
       "@property --property-name{syntax:\"<string>\";inherits:true;initial-value:\"hi\"}",
     );
 
+    minify_test(
+      r#"
+      @property --property-name {
+        syntax: '<string> | --foo';
+        inherits: true;
+        initial-value: "--foo";
+      }
+    "#,
+      "@property --property-name{syntax:\"<string>|--foo\";inherits:true;initial-value:\"--foo\"}",
+    );
+
+    // Test remove ASCII Whitespace
+    minify_test(
+      r#"
+      @property --property-name {
+        syntax: '\A<length>\D |\A<string>\C';
+        inherits: true;
+        initial-value: 25px;
+      }
+    "#,
+      "@property --property-name{syntax:\"<length>|<string>\";inherits:true;initial-value:25px}",
+    );
+
     error_test(
       r#"
       @property --property-name {

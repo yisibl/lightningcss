@@ -27,16 +27,18 @@ use super::string::impl_string_type;
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
 pub struct CustomIdent<'i>(#[cfg_attr(feature = "serde", serde(borrow))] pub CowArcStr<'i>);
 
+pub(crate) fn is_css_wide_keywords(ident: &str) -> bool {
+  match_ignore_ascii_case! { ident,
+    "initial" | "inherit" | "unset" | "default" | "revert" | "revert-layer" => true,
+    _ => false
+  }
+}
+
 impl<'i> Parse<'i> for CustomIdent<'i> {
   fn parse<'t>(input: &mut Parser<'i, 't>) -> Result<Self, ParseError<'i, ParserError<'i>>> {
     let location = input.current_source_location();
     let ident = input.expect_ident()?;
-    let valid = match_ignore_ascii_case! { &ident,
-      "initial" | "inherit" | "unset" | "default" | "revert" | "revert-layer" => false,
-      _ => true
-    };
-
-    if !valid {
+    if is_css_wide_keywords(ident) {
       return Err(location.new_unexpected_token_error(Token::Ident(ident.clone())));
     }
 

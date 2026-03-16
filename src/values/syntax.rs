@@ -1,6 +1,6 @@
 //! CSS syntax strings
 
-use super::ident::Ident;
+use super::ident::{is_css_wide_keywords, Ident};
 use super::number::{CSSInteger, CSSNumber};
 use crate::error::{ParserError, PrinterError};
 use crate::printer::Printer;
@@ -169,7 +169,7 @@ impl<'i> SyntaxString {
   /// Parses a syntax string.
   pub fn parse_string(input: &'i str) -> Result<SyntaxString, ()> {
     // https://drafts.css-houdini.org/css-properties-values-api/#parsing-syntax
-    let mut input = input.trim_matches(SPACE_CHARACTERS);
+    let mut input = input.trim_matches(ASCII_WHITESPACE);
     if input.is_empty() {
       return Err(());
     }
@@ -183,7 +183,7 @@ impl<'i> SyntaxString {
       let component = SyntaxComponent::parse_string(&mut input)?;
       components.push(component);
 
-      input = input.trim_start_matches(SPACE_CHARACTERS);
+      input = input.trim_start_matches(ASCII_WHITESPACE);
       if input.is_empty() {
         break;
       }
@@ -332,13 +332,16 @@ impl SyntaxComponent {
   }
 }
 
+// https://drafts.csswg.org/css-syntax-3/#input-preprocessing
 // https://drafts.csswg.org/css-syntax-3/#whitespace
-static SPACE_CHARACTERS: &'static [char] = &['\u{0020}', '\u{0009}'];
+// ASCII whitespace is U+0009 TAB, U+000A LF, U+000C FF, U+000D CR, or U+0020 SPACE.
+// https://infra.spec.whatwg.org/#ascii-whitespace
+static ASCII_WHITESPACE: &[char] = &['\u{0020}', '\u{0009}', '\u{000A}', '\u{000C}', '\u{000D}' ];
 
 impl SyntaxComponentKind {
   fn parse_string(input: &mut &str) -> Result<SyntaxComponentKind, ()> {
     // https://drafts.css-houdini.org/css-properties-values-api/#consume-syntax-component
-    *input = input.trim_start_matches(SPACE_CHARACTERS);
+    *input = input.trim_start_matches(ASCII_WHITESPACE);
     if input.starts_with('<') {
       // https://drafts.css-houdini.org/css-properties-values-api/#consume-data-type-name
       let end_idx = input.find('>').ok_or(())?;
@@ -364,28 +367,29 @@ impl SyntaxComponentKind {
 
       *input = &input[end_idx + 1..];
       Ok(component)
-    } else if input.starts_with(is_ident_start) {
-      // A literal.
-      let end_idx = input.find(|c| !is_name_code_point(c)).unwrap_or_else(|| input.len());
-      let name = input[0..end_idx].to_owned();
-      *input = &input[end_idx..];
-      Ok(SyntaxComponentKind::Literal(name))
     } else {
-      return Err(());
+      parse_literal(input).map(SyntaxComponentKind::Literal)
     }
   }
 }
 
 #[inline]
-fn is_ident_start(c: char) -> bool {
-  // https://drafts.csswg.org/css-syntax-3/#ident-start-code-point
-  c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '\u{80}' || c == '_'
-}
+// Consume a literal syntax component using cssparser's ident-token logic rather than
+// character scanning so escaped idents normalize the same way on syntax and value sides.
+// https://drafts.csswg.org/css-syntax-3/#typedef-ident-token
+// https://drafts.css-houdini.org/css-properties-values-api-1/#parsing-syntax
+fn parse_literal(input: &mut &str) -> Result<String, ()> {
+  let mut parser_input = ParserInput::new(input);
+  let mut parser = Parser::new(&mut parser_input);
+  let start = parser.position();
+  let ident = parser.expect_ident_cloned().map_err(|_| ())?;
+  if is_css_wide_keywords(&ident) {
+    return Err(());
+  }
 
-#[inline]
-fn is_name_code_point(c: char) -> bool {
-  // https://drafts.csswg.org/css-syntax-3/#ident-code-point
-  is_ident_start(c) || c >= '0' && c <= '9' || c == '-'
+  let consumed = parser.slice_from(start);
+  *input = &input[consumed.len()..];
+  Ok(ident.as_ref().to_owned())
 }
 
 impl<'i> Parse<'i> for SyntaxString {
@@ -644,9 +648,51 @@ mod tests {
       ParsedComponent::Percentage(values::percentage::Percentage(0.25)),
     );
 
+    test(
+      "\n<length>\n|\n<string>\n",
+      "25px",
+      ParsedComponent::Length(values::length::Length::Value(values::length::LengthValue::Px(25.0))),
+    );
+
     error_test("<length> | <percentage>", "calc(100% - 25px)");
 
     test("foo | bar | baz", "bar", ParsedComponent::Literal("bar".into()));
+
+    test(
+      "--foo | <string>",
+      "--foo",
+      ParsedComponent::Literal("--foo".into()),
+    );
+    test(
+      "-foo | <string>",
+      "-foo",
+      ParsedComponent::Literal("-foo".into()),
+    );
+    test(
+      "auto | _baz",
+      "_baz",
+      ParsedComponent::Literal("_baz".into()),
+    );
+    test(
+      "auto | --",
+      "--",
+      ParsedComponent::Literal("--".into()),
+    );
+    test(
+      "  --   ",
+      "--",
+      ParsedComponent::Literal("--".into()),
+    );
+    test(
+      r#"\66 oo | <string>"#,
+      "foo",
+      ParsedComponent::Literal("foo".into()),
+    );
+    test(
+      "foo | <string>",
+      r#"\66 oo"#,
+      ParsedComponent::Literal("foo".into()),
+    );
 
     test(
       "<string>",
@@ -660,8 +706,23 @@ mod tests {
       ParsedComponent::CustomIdent(values::ident::CustomIdent("hi".into())),
     );
 
+    parse_error_test("-");
+    // See also https://github.com/WebKit/WebKit/pull/60356/
+    parse_error_test("|");
+    parse_error_test("||");
+    parse_error_test("*+");
+    parse_error_test("<number> |");
+    parse_error_test("<number> ||");
+    parse_error_test("| <number>");
+    parse_error_test("|| <number>");
+    parse_error_test("banana |");
+    parse_error_test("| banana");
     parse_error_test("<transform-list>#");
     parse_error_test("<color");
     parse_error_test("color>");
+
+    for keyword in ["initial", "inherit", "unset", "default", "revert", "revert-layer"] {
+      parse_error_test(keyword);
+    }
   }
 }
